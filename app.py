@@ -90,7 +90,7 @@ if uploaded_file:
     # Call Gemini
     with st.spinner("Analyzing PFD..."):
         response = client.models.generate_content(
-            model="gemini-2.5-pro",
+            model="gemini-1.5-flash",
             contents=[{"parts": [{"text": prompt_text}, {"text": content_text}]}],
             config={"response_mime_type": "application/json", "response_schema": schema}
         )
@@ -106,3 +106,4 @@ if uploaded_file:
         json.dumps(result, indent=2),
         file_name="pfd_analysis_output.json"
     )
+
