@@ -225,11 +225,12 @@ Return JSON only with two keys:
    - Array of objects:
      - from_document (PFD / CP)
      - missing_in (CP / PFMEA)
-     - row_number (integer where the issue occurs)
+     - row_content (string: include the full row content causing the missing linkage)
      - description
      - suggestion
 """
 
+# ======= Updated Consistency Schema =======
 consistency_schema = {
     "type": "object",
     "properties": {
@@ -255,16 +256,17 @@ consistency_schema = {
                 "properties": {
                     "from_document": {"type": "string"},
                     "missing_in": {"type": "string"},
-                    "row_number": {"type": "integer"},
+                    "row_content": {"type": "string"},
                     "description": {"type": "string"},
                     "suggestion": {"type": "string"}
                 },
-                "required": ["from_document", "missing_in", "row_number", "description", "suggestion"]
+                "required": ["from_document", "missing_in", "row_content", "description", "suggestion"]
             }
         }
     },
     "required": ["summary", "missing_links"]
 }
+
 
 # ======= Streamlit UI =======
 st.title("📊 AIAG PPAP Analyzer Suite")
@@ -402,55 +404,56 @@ with tabs[2]:
        )
 #consistency checker
 with tabs[3]:
-    st.header("🔗 Consistency Checker (PFD ↔ CP ↔ PFMEA)")
-    uploaded_pfd = st.file_uploader("Upload PFD", type=["xlsx", "csv"], key="cons_pfd")
-    uploaded_cp = st.file_uploader("Upload Control Plan", type=["xlsx", "csv"], key="cons_cp")
-    uploaded_pfmea = st.file_uploader("Upload PFMEA", type=["xlsx", "csv"], key="cons_pfmea")
+   st.title("🔗 AIAG Consistency Checker (PFD ↔ CP ↔ PFMEA)")
+   uploaded_pfd = st.file_uploader("Upload PFD", type=["xlsx", "csv"], key="cons_pfd")
+   uploaded_cp = st.file_uploader("Upload Control Plan", type=["xlsx", "csv"], key="cons_cp")
+   uploaded_pfmea = st.file_uploader("Upload PFMEA", type=["xlsx", "csv"], key="cons_pfmea")
 
-    if uploaded_pfd and uploaded_cp and uploaded_pfmea:
-        # Load all three
-        df_pfd = pd.read_csv(uploaded_pfd) if uploaded_pfd.name.endswith(".csv") else pd.read_excel(uploaded_pfd)
-        df_cp = pd.read_csv(uploaded_cp) if uploaded_cp.name.endswith(".csv") else pd.read_excel(uploaded_cp)
-        df_pfmea = pd.read_csv(uploaded_pfmea) if uploaded_pfmea.name.endswith(".csv") else pd.read_excel(uploaded_pfmea)
+   if uploaded_pfd and uploaded_cp and uploaded_pfmea:
+       df_pfd = pd.read_csv(uploaded_pfd) if uploaded_pfd.name.endswith(".csv") else pd.read_excel(uploaded_pfd)
+       df_cp = pd.read_csv(uploaded_cp) if uploaded_cp.name.endswith(".csv") else pd.read_excel(uploaded_cp)
+       df_pfmea = pd.read_csv(uploaded_pfmea) if uploaded_pfmea.name.endswith(".csv") else pd.read_excel(uploaded_pfmea)
 
-        st.subheader("Preview of uploaded documents")
-        st.write("📘 PFD"); st.dataframe(df_pfd.head())
-        st.write("📗 Control Plan"); st.dataframe(df_cp.head())
-        st.write("📕 PFMEA"); st.dataframe(df_pfmea.head())
+       st.subheader("Preview of uploaded documents")
+       st.write("📘 PFD"); st.dataframe(df_pfd.head())
+       st.write("📗 Control Plan"); st.dataframe(df_cp.head())
+       st.write("📕 PFMEA"); st.dataframe(df_pfmea.head())
 
-        # Convert all three to text
-        pfd_text = df_pfd.to_csv(index=False)
-        cp_text = df_cp.to_csv(index=False)
-        pfmea_text = df_pfmea.to_csv(index=False)
+       combined_text = f"""
+      === PFD ===
+      {df_pfd.to_csv(index=False)}
 
-        combined_text = f"""
-=== PFD ===
-{pfd_text}
+      === CONTROL PLAN ===
+      {df_cp.to_csv(index=False)}
 
-=== CONTROL PLAN ===
-{cp_text}
+      === PFMEA ===
+      {df_pfmea.to_csv(index=False)}
+      """
 
-=== PFMEA ===
-{pfmea_text}
-"""
+       with st.spinner("Checking cross-linkages..."):
+           response_consistency = client.models.generate_content(
+               model="gemini-1.5-flash",
+               contents=[{"parts": [{"text": consistency_prompt}, {"text": combined_text}]}],
+               config={"response_mime_type": "application/json", "response_schema": consistency_schema}
+           )
 
-        with st.spinner("Checking cross-linkages..."):
-            response_consistency = client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=[{"parts": [{"text": consistency_prompt}, {"text": combined_text}]}],
-                config={"response_mime_type": "application/json", "response_schema": consistency_schema}
-            )
+       consistency_result = json.loads(response_consistency.text)
 
-        consistency_result = json.loads(response_consistency.text)
+       st.subheader("✅ JSON Output")
+       st.json(consistency_result)
 
-        st.subheader("✅ JSON Output")
-        st.json(consistency_result)
+    # ======= Display missing links as HTML table =======
+       if consistency_result.get("missing_links"):
+           df_missing = pd.DataFrame(consistency_result["missing_links"])
+           st.subheader("📊 Missing Links (HTML Table)")
+           st.write(df_missing.to_html(index=False, escape=False), unsafe_allow_html=True)
 
-        st.download_button(
-            "Download JSON",
-            json.dumps(consistency_result, indent=2),
-            file_name="consistency_analysis_output.json"
-        )
+    # Download JSON
+       st.download_button(
+           "Download JSON",
+           json.dumps(consistency_result, indent=2),
+           file_name="consistency_analysis.json"
+       )
 
 
 
