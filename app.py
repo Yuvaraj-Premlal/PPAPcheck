@@ -192,10 +192,79 @@ pfmea_schema = {
     },
     "required": ["summary", "missed_points"]
 }
+# ======= Consistency Prompt =======
+consistency_prompt = """
+You are a Quality Assurance assistant for PPAP documentation.
+Check the consistency between Process Flow Diagram (PFD), Control Plan (CP), and PFMEA.
+
+Rules:
+- Every process step in PFD must appear in Control Plan.
+- Every control in Control Plan must be referenced in PFMEA.
+- Any missing linkage must be identified.
+
+Return JSON only with two keys:
+
+1. summary:
+   - total_pfd_steps
+   - total_cp_controls
+   - total_pfmea_entries
+   - linked_pfd_to_cp (count)
+   - linked_cp_to_pfmea (count)
+   - linkage_completeness (percentage of proper linkages)
+
+2. missing_links:
+   - Array of objects:
+     - from_document (PFD / CP)
+     - missing_in (CP / PFMEA)
+     - row_number (integer where the issue occurs)
+     - description
+     - suggestion
+"""
+
+consistency_schema = {
+    "type": "object",
+    "properties": {
+        "summary": {
+            "type": "object",
+            "properties": {
+                "total_pfd_steps": {"type": "integer"},
+                "total_cp_controls": {"type": "integer"},
+                "total_pfmea_entries": {"type": "integer"},
+                "linked_pfd_to_cp": {"type": "integer"},
+                "linked_cp_to_pfmea": {"type": "integer"},
+                "linkage_completeness": {"type": "number"}
+            },
+            "required": [
+                "total_pfd_steps", "total_cp_controls", "total_pfmea_entries",
+                "linked_pfd_to_cp", "linked_cp_to_pfmea", "linkage_completeness"
+            ]
+        },
+        "missing_links": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "from_document": {"type": "string"},
+                    "missing_in": {"type": "string"},
+                    "row_number": {"type": "integer"},
+                    "description": {"type": "string"},
+                    "suggestion": {"type": "string"}
+                },
+                "required": ["from_document", "missing_in", "row_number", "description", "suggestion"]
+            }
+        }
+    },
+    "required": ["summary", "missing_links"]
+}
 
 # ======= Streamlit UI =======
 st.title("📊 AIAG PPAP Analyzer Suite")
-tabs = st.tabs(["🔹 PFD Analyzer", "🔹 Control Plan Analyzer", "🔹 PFMEA Analyzer"])
+tabs = st.tabs([
+    "🔹 PFD Analyzer",
+    "🔹 Control Plan Analyzer",
+    "🔹 PFMEA Analyzer",
+    "🔹 Consistency Checker"
+])
 
 # --- PFD Analyzer ---
 with tabs[0]:
@@ -297,4 +366,55 @@ with tabs[2]:
             "Download JSON",
             json.dumps(pfmea_result, indent=2),
             file_name="pfmea_analysis_output.json"
+        )
+#consistency checker
+with tabs[3]:
+    st.header("🔗 Consistency Checker (PFD ↔ CP ↔ PFMEA)")
+    uploaded_pfd = st.file_uploader("Upload PFD", type=["xlsx", "csv"], key="cons_pfd")
+    uploaded_cp = st.file_uploader("Upload Control Plan", type=["xlsx", "csv"], key="cons_cp")
+    uploaded_pfmea = st.file_uploader("Upload PFMEA", type=["xlsx", "csv"], key="cons_pfmea")
+
+    if uploaded_pfd and uploaded_cp and uploaded_pfmea:
+        # Load all three
+        df_pfd = pd.read_csv(uploaded_pfd) if uploaded_pfd.name.endswith(".csv") else pd.read_excel(uploaded_pfd)
+        df_cp = pd.read_csv(uploaded_cp) if uploaded_cp.name.endswith(".csv") else pd.read_excel(uploaded_cp)
+        df_pfmea = pd.read_csv(uploaded_pfmea) if uploaded_pfmea.name.endswith(".csv") else pd.read_excel(uploaded_pfmea)
+
+        st.subheader("Preview of uploaded documents")
+        st.write("📘 PFD"); st.dataframe(df_pfd.head())
+        st.write("📗 Control Plan"); st.dataframe(df_cp.head())
+        st.write("📕 PFMEA"); st.dataframe(df_pfmea.head())
+
+        # Convert all three to text
+        pfd_text = df_pfd.to_csv(index=False)
+        cp_text = df_cp.to_csv(index=False)
+        pfmea_text = df_pfmea.to_csv(index=False)
+
+        combined_text = f"""
+=== PFD ===
+{pfd_text}
+
+=== CONTROL PLAN ===
+{cp_text}
+
+=== PFMEA ===
+{pfmea_text}
+"""
+
+        with st.spinner("Checking cross-linkages..."):
+            response_consistency = client.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=[{"parts": [{"text": consistency_prompt}, {"text": combined_text}]}],
+                config={"response_mime_type": "application/json", "response_schema": consistency_schema}
+            )
+
+        consistency_result = json.loads(response_consistency.text)
+
+        st.subheader("✅ JSON Output")
+        st.json(consistency_result)
+
+        st.download_button(
+            "Download JSON",
+            json.dumps(consistency_result, indent=2),
+            file_name="consistency_analysis_output.json"
         )
