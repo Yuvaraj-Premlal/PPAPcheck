@@ -9,6 +9,7 @@ api_key = os.environ.get("GENIE_API_KEY")  # Set this in Streamlit secrets or en
 client = genai.Client(api_key=api_key)
 
 # ======= PFD Prompt =======
+# ======= PFD Prompt (updated for row_content) =======
 pfd_prompt = """
 You are a Quality Assurance assistant for PPAP documentation.
 Analyze the provided Process Flow Diagram (PFD).
@@ -29,10 +30,11 @@ Return JSON only with two keys:
    - Array of objects:
      - issue
      - severity (high/medium/low)
-     - row_number (integer, must clearly indicate the row)
+     - row_content (string: include the full row content from the PFD)
      - suggestion
 """
 
+# ======= Updated schema =======
 pfd_schema = {
     "type": "object",
     "properties": {
@@ -58,16 +60,15 @@ pfd_schema = {
                 "properties": {
                     "issue": {"type": "string"},
                     "severity": {"type": "string"},
-                    "row_number": {"type": "integer"},
+                    "row_content": {"type": "string"},
                     "suggestion": {"type": "string"}
                 },
-                "required": ["issue", "severity", "row_number", "suggestion"]
+                "required": ["issue", "severity", "row_content", "suggestion"]
             }
         }
     },
     "required": ["summary", "missed_points"]
 }
-
 # ======= Control Plan Prompt =======
 cp_prompt = """
 You are a Quality Assurance assistant for PPAP documentation.
@@ -268,38 +269,47 @@ tabs = st.tabs([
 
 # --- PFD Analyzer ---
 with tabs[0]:
-    st.header("AIAG PFD Analyzer (APQP 3rd Edition, 2024)")
-    uploaded_file = st.file_uploader("Upload PFD (Excel or CSV)", type=["xlsx", "csv"], key="pfd")
+# ======= Streamlit UI =======
+st.title("📘 AIAG PFD Analyzer (APQP 3rd Edition)")
 
-    if uploaded_file:
-        if uploaded_file.name.endswith(".csv"):
-            df = pd.read_csv(uploaded_file)
-        else:
-            df = pd.read_excel(uploaded_file)
+uploaded_file = st.file_uploader("Upload PFD (Excel or CSV)", type=["xlsx", "csv"])
 
-        st.subheader("Preview of uploaded file")
-        st.dataframe(df.head())
+if uploaded_file:
+    if uploaded_file.name.endswith(".csv"):
+        df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.read_excel(uploaded_file)
 
-        content_text = df.to_csv(index=False)
+    st.subheader("Preview of uploaded file")
+    st.dataframe(df.head())
 
-        with st.spinner("Analyzing PFD..."):
-            response = client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=[{"parts": [{"text": pfd_prompt}, {"text": content_text}]}],
-                config={"response_mime_type": "application/json", "response_schema": pfd_schema}
-            )
+    content_text = df.to_csv(index=False)
 
-        result = json.loads(response.text)
-
-        st.subheader("✅ JSON Output")
-        st.json(result)
-
-        st.download_button(
-            "Download JSON",
-            json.dumps(result, indent=2),
-            file_name="pfd_analysis_output.json"
+    # Call Gemini
+    with st.spinner("Analyzing PFD..."):
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=[{"parts": [{"text": pfd_prompt}, {"text": content_text}]}],
+            config={"response_mime_type": "application/json", "response_schema": pfd_schema}
         )
 
+    result = json.loads(response.text)
+
+    st.subheader("✅ JSON Output")
+    st.json(result)
+
+    # ======= Display as HTML table =======
+    if result.get("missed_points"):
+        df_missed = pd.DataFrame(result["missed_points"])
+        st.subheader("📊 Missed Points (HTML Table)")
+        st.write(df_missed.to_html(index=False, escape=False), unsafe_allow_html=True)
+
+    # Download JSON
+    st.download_button(
+        "Download JSON",
+        json.dumps(result, indent=2),
+        file_name="pfd_analysis_output.json"
+    )
 # --- Control Plan Analyzer ---
 with tabs[1]:
     st.header("AIAG Control Plan Analyzer (CP 1st Edition, 2024)")
@@ -418,3 +428,4 @@ with tabs[3]:
             json.dumps(consistency_result, indent=2),
             file_name="consistency_analysis_output.json"
         )
+
