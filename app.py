@@ -270,46 +270,46 @@ tabs = st.tabs([
 # --- PFD Analyzer ---
 with tabs[0]:
 # ======= Streamlit UI =======
-st.title("📘 AIAG PFD Analyzer (APQP 3rd Edition)")
+   st.title("📘 AIAG PFD Analyzer (APQP 3rd Edition)")
 
-uploaded_file = st.file_uploader("Upload PFD (Excel or CSV)", type=["xlsx", "csv"])
+   uploaded_file = st.file_uploader("Upload PFD (Excel or CSV)", type=["xlsx", "csv"])
 
-if uploaded_file:
-    if uploaded_file.name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
-    else:
-        df = pd.read_excel(uploaded_file)
+   if uploaded_file:
+       if uploaded_file.name.endswith(".csv"):
+           df = pd.read_csv(uploaded_file)
+       else:
+           df = pd.read_excel(uploaded_file)
 
-    st.subheader("Preview of uploaded file")
-    st.dataframe(df.head())
+       st.subheader("Preview of uploaded file")
+       st.dataframe(df.head())
 
-    content_text = df.to_csv(index=False)
+       content_text = df.to_csv(index=False)
 
-    # Call Gemini
-    with st.spinner("Analyzing PFD..."):
-        response = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=[{"parts": [{"text": pfd_prompt}, {"text": content_text}]}],
-            config={"response_mime_type": "application/json", "response_schema": pfd_schema}
+       # Call Gemini
+       with st.spinner("Analyzing PFD..."):
+           response = client.models.generate_content(
+               model="gemini-1.5-flash",
+               contents=[{"parts": [{"text": pfd_prompt}, {"text": content_text}]}],
+               config={"response_mime_type": "application/json", "response_schema": pfd_schema}
         )
 
-    result = json.loads(response.text)
+       result = json.loads(response.text)
 
-    st.subheader("✅ JSON Output")
-    st.json(result)
+       st.subheader("✅ JSON Output")
+       st.json(result)
 
     # ======= Display as HTML table =======
-    if result.get("missed_points"):
-        df_missed = pd.DataFrame(result["missed_points"])
-        st.subheader("📊 Missed Points (HTML Table)")
-        st.write(df_missed.to_html(index=False, escape=False), unsafe_allow_html=True)
+       if result.get("missed_points"):
+           df_missed = pd.DataFrame(result["missed_points"])
+           st.subheader("📊 Missed Points (HTML Table)")
+           st.write(df_missed.to_html(index=False, escape=False), unsafe_allow_html=True)
 
     # Download JSON
-    st.download_button(
-        "Download JSON",
-        json.dumps(result, indent=2),
-        file_name="pfd_analysis_output.json"
-    )
+       st.download_button(
+           "Download JSON",
+           json.dumps(result, indent=2),
+           file_name="pfd_analysis_output.json"
+       )
 # --- Control Plan Analyzer ---
 with tabs[1]:
     st.header("AIAG Control Plan Analyzer (CP 1st Edition, 2024)")
@@ -428,4 +428,5 @@ with tabs[3]:
             json.dumps(consistency_result, indent=2),
             file_name="consistency_analysis_output.json"
         )
+
 
