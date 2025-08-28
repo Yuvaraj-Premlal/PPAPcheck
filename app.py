@@ -129,9 +129,73 @@ cp_schema = {
     "required": ["summary", "missed_points"]
 }
 
+# ======= PFMEA Prompt =======
+pfmea_prompt = """
+You are a Quality Assurance assistant for PPAP documentation.
+Analyze the provided PFMEA.
+
+Use the latest AIAG–VDA FMEA Handbook (1st Edition, 2019).
+
+Return JSON only with two keys:
+
+1. summary:
+   - product_outline: story-like description of the product/component
+   - total_failure_modes
+   - high_rpn_count
+   - action_priority_summary (High/Medium/Low distribution)
+   - linkage_to_pfd (Yes/No + examples)
+   - linkage_to_control_plan (Yes/No + examples)
+
+2. missed_points:
+   - Array of objects:
+     - issue
+     - severity (high/medium/low)
+     - row_number (integer, must clearly indicate the row)
+     - suggestion
+"""
+
+pfmea_schema = {
+    "type": "object",
+    "properties": {
+        "summary": {
+            "type": "object",
+            "properties": {
+                "product_outline": {"type": "string"},
+                "total_failure_modes": {"type": "integer"},
+                "high_rpn_count": {"type": "integer"},
+                "action_priority_summary": {"type": "object", "properties": {
+                    "high": {"type": "integer"},
+                    "medium": {"type": "integer"},
+                    "low": {"type": "integer"}
+                }},
+                "linkage_to_pfd": {"type": "string"},
+                "linkage_to_control_plan": {"type": "string"}
+            },
+            "required": [
+                "product_outline", "total_failure_modes", "high_rpn_count",
+                "action_priority_summary", "linkage_to_pfd", "linkage_to_control_plan"
+            ]
+        },
+        "missed_points": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "issue": {"type": "string"},
+                    "severity": {"type": "string"},
+                    "row_number": {"type": "integer"},
+                    "suggestion": {"type": "string"}
+                },
+                "required": ["issue", "severity", "row_number", "suggestion"]
+            }
+        }
+    },
+    "required": ["summary", "missed_points"]
+}
+
 # ======= Streamlit UI =======
 st.title("📊 AIAG PPAP Analyzer Suite")
-tabs = st.tabs(["🔹 PFD Analyzer", "🔹 Control Plan Analyzer"])
+tabs = st.tabs(["🔹 PFD Analyzer", "🔹 Control Plan Analyzer", "🔹 PFMEA Analyzer"])
 
 # --- PFD Analyzer ---
 with tabs[0]:
@@ -199,4 +263,38 @@ with tabs[1]:
             "Download JSON",
             json.dumps(cp_result, indent=2),
             file_name="control_plan_analysis_output.json"
+        )
+
+# --- PFMEA Analyzer ---
+with tabs[2]:
+    st.header("AIAG–VDA PFMEA Analyzer (1st Edition, 2019)")
+    uploaded_pfmea = st.file_uploader("Upload PFMEA (Excel or CSV)", type=["xlsx", "csv"], key="pfmea")
+
+    if uploaded_pfmea:
+        if uploaded_pfmea.name.endswith(".csv"):
+            df_pfmea = pd.read_csv(uploaded_pfmea)
+        else:
+            df_pfmea = pd.read_excel(uploaded_pfmea)
+
+        st.subheader("Preview of uploaded PFMEA")
+        st.dataframe(df_pfmea.head())
+
+        content_text = df_pfmea.to_csv(index=False)
+
+        with st.spinner("Analyzing PFMEA..."):
+            response_pfmea = client.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=[{"parts": [{"text": pfmea_prompt}, {"text": content_text}]}],
+                config={"response_mime_type": "application/json", "response_schema": pfmea_schema}
+            )
+
+        pfmea_result = json.loads(response_pfmea.text)
+
+        st.subheader("✅ JSON Output")
+        st.json(pfmea_result)
+
+        st.download_button(
+            "Download JSON",
+            json.dumps(pfmea_result, indent=2),
+            file_name="pfmea_analysis_output.json"
         )
