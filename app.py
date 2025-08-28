@@ -134,30 +134,32 @@ cp_schema = {
     "required": ["summary", "missed_points"]
 }
 # ======= PFMEA Prompt =======
+# ======= PFMEA Prompt (updated for row_content) =======
 pfmea_prompt = """
 You are a Quality Assurance assistant for PPAP documentation.
 Analyze the provided PFMEA.
 
-Use the latest AIAG–VDA FMEA Handbook (1st Edition, 2019).
+Use the latest AIAG-VDA FMEA Handbook (2019) as reference.
 
 Return JSON only with two keys:
 
 1. summary:
-   - product_outline: story-like description of the product/component
+   - product_outline: story-like description of the process/product
    - total_failure_modes
    - high_rpn_count
-   - action_priority_summary (High/Medium/Low distribution)
-   - linkage_to_pfd (Yes/No + examples)
-   - linkage_to_control_plan (Yes/No + examples)
+   - action_priority_summary (high/medium/low counts)
+   - linkage_to_pfd (Yes/No + details)
+   - linkage_to_control_plan (Yes/No + details)
 
 2. missed_points:
    - Array of objects:
      - issue
      - severity (high/medium/low)
-     - row_number (integer, must clearly indicate the row)
+     - row_content (string: include the full row content from the PFMEA)
      - suggestion
 """
 
+# ======= Updated PFMEA schema =======
 pfmea_schema = {
     "type": "object",
     "properties": {
@@ -167,11 +169,14 @@ pfmea_schema = {
                 "product_outline": {"type": "string"},
                 "total_failure_modes": {"type": "integer"},
                 "high_rpn_count": {"type": "integer"},
-                "action_priority_summary": {"type": "object", "properties": {
-                    "high": {"type": "integer"},
-                    "medium": {"type": "integer"},
-                    "low": {"type": "integer"}
-                }},
+                "action_priority_summary": {
+                    "type": "object",
+                    "properties": {
+                        "high": {"type": "integer"},
+                        "medium": {"type": "integer"},
+                        "low": {"type": "integer"}
+                    }
+                },
                 "linkage_to_pfd": {"type": "string"},
                 "linkage_to_control_plan": {"type": "string"}
             },
@@ -187,10 +192,10 @@ pfmea_schema = {
                 "properties": {
                     "issue": {"type": "string"},
                     "severity": {"type": "string"},
-                    "row_number": {"type": "integer"},
+                    "row_content": {"type": "string"},
                     "suggestion": {"type": "string"}
                 },
-                "required": ["issue", "severity", "row_number", "suggestion"]
+                "required": ["issue", "severity", "row_content", "suggestion"]
             }
         }
     },
@@ -356,37 +361,45 @@ with tabs[1]:
        )
 # --- PFMEA Analyzer ---
 with tabs[2]:
-    st.header("AIAG–VDA PFMEA Analyzer (1st Edition, 2019)")
-    uploaded_pfmea = st.file_uploader("Upload PFMEA (Excel or CSV)", type=["xlsx", "csv"], key="pfmea")
+   st.title("📕 AIAG PFMEA Analyzer")
+   uploaded_file = st.file_uploader("Upload PFMEA (Excel or CSV)", type=["xlsx", "csv"])
 
-    if uploaded_pfmea:
-        if uploaded_pfmea.name.endswith(".csv"):
-            df_pfmea = pd.read_csv(uploaded_pfmea)
-        else:
-            df_pfmea = pd.read_excel(uploaded_pfmea)
+   if uploaded_file:
+       if uploaded_file.name.endswith(".csv"):
+           df = pd.read_csv(uploaded_file)
+       else:
+           df = pd.read_excel(uploaded_file)
 
-        st.subheader("Preview of uploaded PFMEA")
-        st.dataframe(df_pfmea.head())
+       st.subheader("Preview of uploaded file")
+       st.dataframe(df.head())
 
-        content_text = df_pfmea.to_csv(index=False)
+       content_text = df.to_csv(index=False)
 
-        with st.spinner("Analyzing PFMEA..."):
-            response_pfmea = client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=[{"parts": [{"text": pfmea_prompt}, {"text": content_text}]}],
-                config={"response_mime_type": "application/json", "response_schema": pfmea_schema}
-            )
-
-        pfmea_result = json.loads(response_pfmea.text)
-
-        st.subheader("✅ JSON Output")
-        st.json(pfmea_result)
-
-        st.download_button(
-            "Download JSON",
-            json.dumps(pfmea_result, indent=2),
-            file_name="pfmea_analysis_output.json"
+    # Call Gemini
+       with st.spinner("Analyzing PFMEA..."):
+           response = client.models.generate_content(
+               model="gemini-1.5-flash",
+               contents=[{"parts": [{"text": pfmea_prompt}, {"text": content_text}]}],
+               config={"response_mime_type": "application/json", "response_schema": pfmea_schema}
         )
+
+       result = json.loads(response.text)
+
+       st.subheader("✅ JSON Output")
+       st.json(result)
+
+    # ======= Display missed points as HTML table =======
+       if result.get("missed_points"):
+           df_missed = pd.DataFrame(result["missed_points"])
+           st.subheader("📊 Missed Points (HTML Table)")
+           st.write(df_missed.to_html(index=False, escape=False), unsafe_allow_html=True)
+
+    # Download JSON
+       st.download_button(
+           "Download JSON",
+           json.dumps(result, indent=2),
+           file_name="pfmea_analysis.json"
+       )
 #consistency checker
 with tabs[3]:
     st.header("🔗 Consistency Checker (PFD ↔ CP ↔ PFMEA)")
@@ -438,6 +451,7 @@ with tabs[3]:
             json.dumps(consistency_result, indent=2),
             file_name="consistency_analysis_output.json"
         )
+
 
 
 
