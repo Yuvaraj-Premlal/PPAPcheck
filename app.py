@@ -315,8 +315,8 @@ with tabs[0]:
        )
 # --- Control Plan Analyzer ---
 with tabs[1]:
-    st.title("📗 AIAG Control Plan Analyzer")
-      uploaded_file = st.file_uploader("Upload Control Plan (Excel or CSV)", type=["xlsx", "csv"])
+   st.title("📗 AIAG Control Plan Analyzer")
+   uploaded_file = st.file_uploader("Upload Control Plan (Excel or CSV)", type=["xlsx", "csv"])
 
    if uploaded_file:
        if uploaded_file.name.endswith(".csv"):
@@ -438,6 +438,7 @@ with tabs[3]:
             json.dumps(consistency_result, indent=2),
             file_name="consistency_analysis_output.json"
         )
+
 
 
 
