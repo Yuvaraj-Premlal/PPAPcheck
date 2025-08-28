@@ -2,23 +2,141 @@ import streamlit as st
 import pandas as pd
 import json
 import os
-import io
 from google import genai
 
 # ======= Gemini Client =======
-api_key = os.environ.get("GENIE_API_KEY")
+api_key = os.environ.get("GENIE_API_KEY")  # Set this in Streamlit secrets or env vars
 client = genai.Client(api_key=api_key)
 
-# ======= Helper: Convert JSON to Excel =======
-def json_to_excel(json_data, sheet_name="Analysis"):
-    output = io.BytesIO()
-    df = pd.json_normalize(json_data) if isinstance(json_data, dict) else pd.DataFrame(json_data)
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df.to_excel(writer, index=False, sheet_name=sheet_name)
-    return output.getvalue()
-
 # ======= Prompts =======
-# (Same as before, skipping for brevity...)
+pfd_prompt = """
+You are a Quality Assurance assistant for PPAP documentation.
+Analyze the provided Process Flow Diagram (PFD).
+
+Use the latest AIAG guidance (APQP 3rd Edition, March 2024).
+
+Return JSON only with two keys:
+
+1. summary:
+   - product_outline: story-like description of the product/component
+   - total_steps
+   - machines_tools_list
+   - special_characteristics_count
+   - pfmea_refs
+   - control_plan_refs
+
+2. missed_points:
+   - Array of objects:
+     - issue
+     - severity (high/medium/low)
+     - row_content (string: include the exact row content from the PFD)
+     - suggestion
+"""
+
+cp_prompt = """
+You are a Quality Assurance assistant for PPAP documentation.
+Analyze the provided Control Plan.
+
+Use the latest AIAG guidance (Control Plan Reference Manual 1st Edition, March 2024).
+
+Return JSON only with two keys:
+
+1. summary:
+   - product_outline: short story-like description of what this Control Plan covers
+   - total_steps
+   - key_controls_list
+   - special_characteristics_count
+   - pfd_refs
+   - pfmea_refs
+
+2. missed_points:
+   - Array of objects:
+     - issue
+     - severity (high/medium/low)
+     - row_content (string: include the exact row content from the Control Plan)
+     - suggestion
+"""
+
+pfmea_prompt = """
+You are a Quality Assurance assistant for PPAP documentation.
+Analyze the provided PFMEA.
+
+Use the latest AIAG-VDA FMEA Handbook (2019) as reference.
+
+Return JSON only with two keys:
+
+1. summary:
+   - product_outline: story-like description of the process/product
+   - total_failure_modes
+   - high_rpn_count
+   - pfd_refs
+   - control_plan_refs
+
+2. missed_points:
+   - Array of objects:
+     - issue
+     - severity (high/medium/low)
+     - row_content (string: include the exact row content from the PFMEA)
+     - suggestion
+"""
+
+consistency_prompt = """
+Check consistency between PFD, Control Plan, and PFMEA.
+
+- Ensure every process step in PFD is represented in Control Plan.
+- Ensure every Control Plan entry has a corresponding PFMEA entry.
+- Check that PFMEA references trace back to PFD or Control Plan.
+
+For each mismatch, clearly include:
+- source_doc (e.g., PFD)
+- target_doc (e.g., Control Plan)
+- content (the actual row content missing in the target doc)
+- suggestion (how to correct the linkage)
+
+Return JSON only.
+"""
+
+# ======= Schemas =======
+single_doc_schema = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "object"},
+        "missed_points": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "issue": {"type": "string"},
+                    "severity": {"type": "string"},
+                    "row_content": {"type": "string"},
+                    "suggestion": {"type": "string"}
+                },
+                "required": ["issue", "severity", "row_content", "suggestion"]
+            }
+        }
+    },
+    "required": ["summary", "missed_points"]
+}
+
+consistency_schema = {
+    "type": "object",
+    "properties": {
+        "missing_links": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source_doc": {"type": "string"},
+                    "target_doc": {"type": "string"},
+                    "content": {"type": "string"},
+                    "suggestion": {"type": "string"}
+                },
+                "required": ["source_doc", "target_doc", "content", "suggestion"]
+            }
+        }
+    },
+    "required": ["missing_links"]
+}
 
 # ======= Streamlit UI =======
 st.title("AIAG Document Analyzer (PFD, Control Plan, PFMEA, Consistency)")
@@ -32,7 +150,6 @@ with tabs[0]:
     if uploaded_file:
         df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
         st.dataframe(df.head())
-
         content_text = df.to_csv(index=False)
         with st.spinner("Analyzing PFD..."):
             response = client.models.generate_content(
@@ -41,20 +158,7 @@ with tabs[0]:
                 config={"response_mime_type": "application/json", "response_schema": single_doc_schema}
             )
         result = json.loads(response.text)
-
-        st.subheader("✅ JSON Output")
         st.json(result)
-
-        st.subheader("📊 Missed Points (Table)")
-        if result.get("missed_points"):
-            df_out = pd.DataFrame(result["missed_points"])
-            st.dataframe(df_out)
-
-            # Download Excel
-            excel_data = json_to_excel(result["missed_points"], "PFD_Missed_Points")
-            st.download_button("Download Excel", excel_data, "pfd_analysis.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-        # JSON download
         st.download_button("Download JSON", json.dumps(result, indent=2), file_name="pfd_analysis.json")
 
 # ---- Control Plan ----
@@ -64,7 +168,6 @@ with tabs[1]:
     if uploaded_file:
         df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
         st.dataframe(df.head())
-
         content_text = df.to_csv(index=False)
         with st.spinner("Analyzing Control Plan..."):
             response = client.models.generate_content(
@@ -73,17 +176,7 @@ with tabs[1]:
                 config={"response_mime_type": "application/json", "response_schema": single_doc_schema}
             )
         result = json.loads(response.text)
-
-        st.subheader("✅ JSON Output")
         st.json(result)
-
-        st.subheader("📊 Missed Points (Table)")
-        if result.get("missed_points"):
-            df_out = pd.DataFrame(result["missed_points"])
-            st.dataframe(df_out)
-            excel_data = json_to_excel(result["missed_points"], "CP_Missed_Points")
-            st.download_button("Download Excel", excel_data, "cp_analysis.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
         st.download_button("Download JSON", json.dumps(result, indent=2), file_name="cp_analysis.json")
 
 # ---- PFMEA ----
@@ -93,7 +186,6 @@ with tabs[2]:
     if uploaded_file:
         df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
         st.dataframe(df.head())
-
         content_text = df.to_csv(index=False)
         with st.spinner("Analyzing PFMEA..."):
             response = client.models.generate_content(
@@ -102,17 +194,7 @@ with tabs[2]:
                 config={"response_mime_type": "application/json", "response_schema": single_doc_schema}
             )
         result = json.loads(response.text)
-
-        st.subheader("✅ JSON Output")
         st.json(result)
-
-        st.subheader("📊 Missed Points (Table)")
-        if result.get("missed_points"):
-            df_out = pd.DataFrame(result["missed_points"])
-            st.dataframe(df_out)
-            excel_data = json_to_excel(result["missed_points"], "PFMEA_Missed_Points")
-            st.download_button("Download Excel", excel_data, "pfmea_analysis.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
         st.download_button("Download JSON", json.dumps(result, indent=2), file_name="pfmea_analysis.json")
 
 # ---- Consistency Checker ----
@@ -150,15 +232,5 @@ with tabs[3]:
                 config={"response_mime_type": "application/json", "response_schema": consistency_schema}
             )
         consistency_result = json.loads(response_consistency.text)
-
-        st.subheader("✅ JSON Output")
         st.json(consistency_result)
-
-        st.subheader("📊 Missing Links (Table)")
-        if consistency_result.get("missing_links"):
-            df_out = pd.DataFrame(consistency_result["missing_links"])
-            st.dataframe(df_out)
-            excel_data = json_to_excel(consistency_result["missing_links"], "Consistency_Check")
-            st.download_button("Download Excel", excel_data, "consistency_analysis.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
         st.download_button("Download JSON", json.dumps(consistency_result, indent=2), file_name="consistency_analysis.json")
